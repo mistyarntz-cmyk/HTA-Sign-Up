@@ -840,37 +840,46 @@ async function loadClaimedBoard() {
     }).filter(Boolean);
   }
 
-  // Try corsproxy.io (returns raw text)
-  try {
-    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(csvUrl)}`);
-    console.log('corsproxy status:', res.status);
-    if (!res.ok) throw new Error('corsproxy failed: ' + res.status);
-    const text = await res.text();
-    console.log('corsproxy response (first 300 chars):', text.substring(0, 300));
-    if (text.includes('Timestamp') || (text.includes(',') && !text.includes('<html'))) {
-      renderClaimedBoard(parseCSV(text));
-      return;
-    }
-    throw new Error('not CSV: ' + text.substring(0, 100));
-  } catch(e) { console.log('corsproxy error:', e.message); /* fall through */ }
+  // Use JSONP with Google Apps Script endpoint (bypasses CORS)
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzqOCPnsWrzWxnYMBvUz1J_02pMgUWqLzbpz8ghrWAnFlvbTJyjutA1X4cLV3ghPvnU7g/exec';
+  const callbackName = 'htaSignupCallback_' + Date.now();
 
-  // Fallback: allorigins (returns JSON wrapper)
-  try {
-    const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(csvUrl)}`);
-    console.log('allorigins status:', res.status);
-    if (!res.ok) throw new Error('allorigins failed');
-    const json = await res.json();
-    console.log('allorigins contents (first 300):', (json.contents||'').substring(0, 300));
-    if (json.contents && json.contents.includes(',') && !json.contents.includes('<html')) {
-      renderClaimedBoard(parseCSV(json.contents));
-      return;
-    }
-    throw new Error('not CSV');
-  } catch(e) { console.log('allorigins error:', e.message); /* fall through */ }
+  const timeout = setTimeout(() => {
+    cleanup();
+    container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
+  }, 8000);
 
-  // Both failed
-  console.log('Both proxies failed — showing fallback message');
-  container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
+  function cleanup() {
+    clearTimeout(timeout);
+    delete window[callbackName];
+    const old = document.getElementById('jsonp-script');
+    if (old) old.remove();
+  }
+
+  window[callbackName] = function(data) {
+    cleanup();
+    if (data && Array.isArray(data)) {
+      // data is array of row objects from GAS doGet
+      const signups = data.map(row => ({
+        day: row.day || row.Day || '',
+        slot: row.slot || row.Slot || '',
+        name: row.name || row.Name || '',
+        bringing: row.bringing || row.Bringing || ''
+      })).filter(r => r.name);
+      renderClaimedBoard(signups);
+    } else {
+      container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
+    }
+  };
+
+  const script = document.createElement('script');
+  script.id = 'jsonp-script';
+  script.src = `${GAS_URL}?callback=${callbackName}`;
+  script.onerror = () => {
+    cleanup();
+    container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
+  };
+  document.head.appendChild(script);
 }
 
 function renderClaimedBoard(signups) {
