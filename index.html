@@ -843,28 +843,33 @@ async function loadClaimedBoard() {
   // Try corsproxy.io (returns raw text)
   try {
     const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(csvUrl)}`);
-    if (!res.ok) throw new Error('corsproxy failed');
+    console.log('corsproxy status:', res.status);
+    if (!res.ok) throw new Error('corsproxy failed: ' + res.status);
     const text = await res.text();
-    if (text.includes(',')) { // sanity check it's CSV
+    console.log('corsproxy response (first 300 chars):', text.substring(0, 300));
+    if (text.includes('Timestamp') || (text.includes(',') && !text.includes('<html'))) {
       renderClaimedBoard(parseCSV(text));
       return;
     }
-    throw new Error('bad response');
-  } catch(e) { /* fall through to next proxy */ }
+    throw new Error('not CSV: ' + text.substring(0, 100));
+  } catch(e) { console.log('corsproxy error:', e.message); /* fall through */ }
 
   // Fallback: allorigins (returns JSON wrapper)
   try {
     const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(csvUrl)}`);
+    console.log('allorigins status:', res.status);
     if (!res.ok) throw new Error('allorigins failed');
     const json = await res.json();
-    if (json.contents && json.contents.includes(',')) {
+    console.log('allorigins contents (first 300):', (json.contents||'').substring(0, 300));
+    if (json.contents && json.contents.includes(',') && !json.contents.includes('<html')) {
       renderClaimedBoard(parseCSV(json.contents));
       return;
     }
-    throw new Error('bad response');
-  } catch(e) { /* fall through */ }
+    throw new Error('not CSV');
+  } catch(e) { console.log('allorigins error:', e.message); /* fall through */ }
 
   // Both failed
+  console.log('Both proxies failed — showing fallback message');
   container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
 }
 
