@@ -821,36 +821,51 @@ async function loadClaimedBoard() {
   const SHEET_ID = '120Bl7yRDFDZxxdQtqk2M4foh0bHI6Ak3cGbJwr0UWu0';
   const GID      = '867657443';
   const csvUrl   = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
-  // Use allorigins proxy to bypass CORS
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(csvUrl)}`;
 
-  try {
-    const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error('fetch failed');
-    const json = await res.json();
-    const text = json.contents;
+  function parseCSV(text) {
     const rows = text.trim().split('\n').slice(1); // skip header
-    const signups = rows
-      .map(row => {
-        // Simple CSV parse handling quoted fields
-        const cols = [];
-        let cur = '', inQ = false;
-        for (let i = 0; i < row.length; i++) {
-          const ch = row[i];
-          if (ch === '"') { inQ = !inQ; }
-          else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
-          else { cur += ch; }
-        }
-        cols.push(cur.trim());
-        // columns: Timestamp, Day, Slot, Name, Phone, Email, Bringing
-        if (!cols[3]) return null; // skip empty name
-        return { day: cols[1], slot: cols[2], name: cols[3], bringing: cols[6] || '' };
-      })
-      .filter(Boolean);
-    renderClaimedBoard(signups);
-  } catch(err) {
-    container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
+    return rows.map(row => {
+      const cols = [];
+      let cur = '', inQ = false;
+      for (let i = 0; i < row.length; i++) {
+        const ch = row[i];
+        if (ch === '"') { inQ = !inQ; }
+        else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+        else { cur += ch; }
+      }
+      cols.push(cur.trim());
+      // columns: Timestamp, Day, Slot, Name, Phone, Email, Bringing
+      if (!cols[3]) return null;
+      return { day: cols[1], slot: cols[2], name: cols[3], bringing: cols[6] || '' };
+    }).filter(Boolean);
   }
+
+  // Try corsproxy.io (returns raw text)
+  try {
+    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(csvUrl)}`);
+    if (!res.ok) throw new Error('corsproxy failed');
+    const text = await res.text();
+    if (text.includes(',')) { // sanity check it's CSV
+      renderClaimedBoard(parseCSV(text));
+      return;
+    }
+    throw new Error('bad response');
+  } catch(e) { /* fall through to next proxy */ }
+
+  // Fallback: allorigins (returns JSON wrapper)
+  try {
+    const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(csvUrl)}`);
+    if (!res.ok) throw new Error('allorigins failed');
+    const json = await res.json();
+    if (json.contents && json.contents.includes(',')) {
+      renderClaimedBoard(parseCSV(json.contents));
+      return;
+    }
+    throw new Error('bad response');
+  } catch(e) { /* fall through */ }
+
+  // Both failed
+  container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
 }
 
 function renderClaimedBoard(signups) {
