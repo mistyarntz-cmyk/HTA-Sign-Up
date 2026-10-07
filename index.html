@@ -809,36 +809,41 @@ function loadAll() {
 }
 
 // ── Live "What's Been Claimed" board ───────────────────────
-function loadClaimedBoard() {
+async function loadClaimedBoard() {
   const container = document.getElementById('claimed-days');
   if (!container) return;
 
-  // Use JSONP to bypass CORS — GAS will call our callback with the data
-  const callbackName = 'htaCallback_' + Date.now();
-  const script = document.createElement('script');
+  // Read directly from public Google Sheet via CSV export
+  const SHEET_ID = '120Bl7yRDFDZxxdQtqk2M4foh0bHI6Ak3cGbJwr0UWu0';
+  const GID      = '867657443';
+  const csvUrl   = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
 
-  // Set a timeout in case the script never loads
-  const timeout = setTimeout(() => {
-    delete window[callbackName];
-    script.remove();
+  try {
+    const res = await fetch(csvUrl);
+    if (!res.ok) throw new Error('fetch failed');
+    const text = await res.text();
+    const rows = text.trim().split('\n').slice(1); // skip header
+    const signups = rows
+      .map(row => {
+        // Simple CSV parse handling quoted fields
+        const cols = [];
+        let cur = '', inQ = false;
+        for (let i = 0; i < row.length; i++) {
+          const ch = row[i];
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+          else { cur += ch; }
+        }
+        cols.push(cur.trim());
+        // columns: Timestamp, Day, Slot, Name, Phone, Email, Bringing
+        if (!cols[3]) return null; // skip empty name
+        return { day: cols[1], slot: cols[2], name: cols[3], bringing: cols[6] || '' };
+      })
+      .filter(Boolean);
+    renderClaimedBoard(signups);
+  } catch(err) {
     container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
-  }, 8000);
-
-  window[callbackName] = function(json) {
-    clearTimeout(timeout);
-    delete window[callbackName];
-    script.remove();
-    renderClaimedBoard(json.signups || []);
-  };
-
-  script.src = GAS_URL + '?action=get&callback=' + callbackName;
-  script.onerror = function() {
-    clearTimeout(timeout);
-    delete window[callbackName];
-    script.remove();
-    container.innerHTML = '<div class="claimed-loading">Board updates when parents submit! ✨</div>';
-  };
-  document.head.appendChild(script);
+  }
 }
 
 function renderClaimedBoard(signups) {
